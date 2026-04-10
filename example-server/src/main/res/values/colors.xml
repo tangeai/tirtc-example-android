@@ -1,0 +1,10 @@
+<resources>
+    <color name="demo_bg">#FFFFFF</color>
+    <color name="demo_surface">#FFFFFF</color>
+    <color name="demo_stroke">#D8DCE5</color>
+    <color name="demo_text_primary">#1D1D1F</color>
+    <color name="demo_text_secondary">#8E8E93</color>
+    <color name="demo_hint_text">#B2B2B7</color>
+    <color name="demo_theme_primary">#FF6B63FF</color>
+    <color name="demo_action_disabled">#C9CDD7</color>
+</resources>
