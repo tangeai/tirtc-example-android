@@ -122,12 +122,12 @@ class MainActivity : AppCompatActivity() {
         clearActiveScanner()
         stopPlayer()
         statusView = null
-        val appIdField = editText("app_id", clientConfig.appId, viewId = R.id.field_app_id)
-        val endpointField = editText("endpoint（可选）", clientConfig.endpoint, viewId = R.id.field_endpoint)
-        val remoteIdField = editText("remote_id", clientConfig.remoteId, viewId = R.id.field_remote_id)
-        val audioStreamField = editText("audio stream id", clientConfig.audioStreamId.toString(), viewId = R.id.field_audio_stream_id)
-        val videoStreamField = editText("video stream id", clientConfig.videoStreamId.toString(), viewId = R.id.field_video_stream_id)
-        val tokenField = editText("token", clientConfig.token, multiLine = true, viewId = R.id.field_token)
+        val appIdField = editText("TiRTC 应用标识，进入播放页前必须提供。", clientConfig.appId, viewId = R.id.field_app_id)
+        val endpointField = editText("接入的云端环境，留空则使用默认环境。", clientConfig.endpoint, viewId = R.id.field_endpoint)
+        val remoteIdField = editText("待连接的远端目标 ID", clientConfig.remoteId, viewId = R.id.field_remote_id)
+        val audioStreamField = editText("音频流 ID，默认 10", clientConfig.audioStreamId.toString(), viewId = R.id.field_audio_stream_id)
+        val videoStreamField = editText("视频流 ID，默认 11", clientConfig.videoStreamId.toString(), viewId = R.id.field_video_stream_id)
+        val tokenField = editText("进行一次连接所需的有效 token", clientConfig.token, multiLine = true, viewId = R.id.field_token)
         setContentView(
             page {
                 header(
@@ -135,11 +135,19 @@ class MainActivity : AppCompatActivity() {
                     primaryAction = "偏好设置" to { showSettings() },
                     secondaryAction = "扫一扫" to { showClientQr(appIdField, endpointField, remoteIdField, tokenField) },
                 )
-                addView(fieldBlock(appIdField))
-                addView(fieldBlock(endpointField))
-                addView(fieldBlock(remoteIdField))
-                addView(twoColumnFields(audioStreamField, videoStreamField))
-                addView(fieldBlock(tokenField))
+                addViewWithMargin(fieldBlock("app_id", appIdField), bottom = 16)
+                addViewWithMargin(fieldBlock("endpoint", endpointField), bottom = 16)
+                addViewWithMargin(fieldBlock("remote_id", remoteIdField), bottom = 16)
+                addViewWithMargin(
+                    twoColumnFields(
+                        "audio_stream_id",
+                        audioStreamField,
+                        "video_stream_id",
+                        videoStreamField,
+                    ),
+                    bottom = 16,
+                )
+                addViewWithMargin(fieldBlock("token", tokenField), bottom = 20)
                 addView(
                     primaryButton("开始播放") {
                         val next = readClientConfig(
@@ -257,7 +265,7 @@ class MainActivity : AppCompatActivity() {
     ) {
         val payloadField =
             editText(
-                label = "JSON payload",
+                placeholder = CLIENT_QR_SAMPLE,
                 value = CLIENT_QR_SAMPLE,
                 multiLine = true,
             )
@@ -279,7 +287,10 @@ class MainActivity : AppCompatActivity() {
                 navigationHeader("扫一扫") { showConfigure() }
                 addView(scannerPanel(scannerView))
                 addView(qrGuide("将二维码完整放入方框内，系统会自动识别并填充 app_id、remote_id、token。"))
-                addView(fieldBlock(payloadField))
+                addViewWithMargin(
+                    fieldBlock("JSON payload", payloadField),
+                    bottom = 20,
+                )
                 addView(
                     primaryButton("解析并填充") {
                         val payload = parseClientQr(payloadField.text.toString()) ?: return@primaryButton
@@ -337,16 +348,16 @@ class MainActivity : AppCompatActivity() {
     private fun showDeviceConfigure() {
         clearActiveScanner()
         stopDevice()
-        val endpointField = editText("endpoint（可选）", deviceConfig.endpoint, viewId = R.id.field_endpoint)
-        val deviceIdField = editText("device_id", deviceConfig.deviceId, viewId = R.id.field_device_id)
+        val endpointField = editText("接入的云端环境，留空则使用默认环境。", deviceConfig.endpoint, viewId = R.id.field_endpoint)
+        val deviceIdField = editText("设备端身份标识。", deviceConfig.deviceId, viewId = R.id.field_device_id)
         val secretField =
-            editText("device_secret_key", deviceConfig.deviceSecretKey, isSecret = true, viewId = R.id.field_device_secret_key)
+            editText("设备端连接密钥。", deviceConfig.deviceSecretKey, isSecret = true, viewId = R.id.field_device_secret_key)
         setContentView(
             page {
                 navigationHeader("设备端配置") { showConfigure() }
-                addView(fieldBlock(endpointField))
-                addView(fieldBlock(deviceIdField))
-                addView(fieldBlock(secretField))
+                addViewWithMargin(fieldBlock("endpoint", endpointField), bottom = 16)
+                addViewWithMargin(fieldBlock("device_id", deviceIdField), bottom = 16)
+                addViewWithMargin(fieldBlock("device_secret_key", secretField), bottom = 20)
                 addView(
                     outlinedButton("扫一扫") {
                         showDeviceQr(endpointField, deviceIdField, secretField)
@@ -377,7 +388,7 @@ class MainActivity : AppCompatActivity() {
         deviceIdField: EditText,
         secretField: EditText,
     ) {
-        val payloadField = editText("JSON payload", DEVICE_QR_SAMPLE, multiLine = true)
+        val payloadField = editText(DEVICE_QR_SAMPLE, DEVICE_QR_SAMPLE, multiLine = true)
         val scannerView =
             qrScannerView { raw ->
                 val payload = parseDeviceQr(raw) ?: return@qrScannerView false
@@ -393,7 +404,10 @@ class MainActivity : AppCompatActivity() {
                 navigationHeader("设备端扫一扫") { showDeviceConfigure() }
                 addView(scannerPanel(scannerView))
                 addView(qrGuide("使用 JSON，并且只包含 device_id、device_secret_key，以及可选的 endpoint。"))
-                addView(fieldBlock(payloadField))
+                addViewWithMargin(
+                    fieldBlock("JSON payload", payloadField),
+                    bottom = 20,
+                )
                 addView(
                     primaryButton("解析并填充") {
                         val payload = parseDeviceQr(payloadField.text.toString()) ?: return@primaryButton
@@ -636,18 +650,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showCommandPanel() {
-        val commandField = editText("command id", "0x54524343")
+        val commandField = editText("0x00000000", "0x54524343")
         val mode = spinner(listOf("text", "hex"), 0)
-        val payloadField = editText("payload", "echo", multiLine = true)
+        val payloadField = editText("输入文本内容", "echo", multiLine = true)
         val history = body(commandHistory)
         commandHistoryView = history
         val root =
             LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(16), dp(10), dp(16), 0)
-                addView(fieldBlock(commandField))
+                addViewWithMargin(fieldBlock("命令 ID", commandField), bottom = 16)
                 addView(spinnerBlock("payload mode", mode))
-                addView(fieldBlock(payloadField))
+                addViewWithMargin(fieldBlock("命令内容", payloadField), bottom = 16)
                 addView(sectionTitle("history"))
                 addView(history)
             }

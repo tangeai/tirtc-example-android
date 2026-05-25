@@ -225,19 +225,28 @@ internal fun Context.scannerPanel(scannerView: View): FrameLayout {
     }
 }
 
-internal fun Context.fieldBlock(editText: EditText): View {
-    return surface { addView(editText) }
+internal fun Context.fieldBlock(
+    label: String,
+    editText: EditText,
+): View {
+    return LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(inputLabel(label))
+        addView(editText)
+    }
 }
 
 internal fun Context.twoColumnFields(
+    firstLabel: String,
     first: EditText,
+    secondLabel: String,
     second: EditText,
 ): View {
     return LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
-        addView(fieldBlock(first), LinearLayout.LayoutParams(0, wrap(), 1f))
-        addView(space(dp(12)))
-        addView(fieldBlock(second), LinearLayout.LayoutParams(0, wrap(), 1f))
+        addView(fieldBlock(firstLabel, first), LinearLayout.LayoutParams(0, wrap(), 1f))
+        addView(space(dp(16)))
+        addView(fieldBlock(secondLabel, second), LinearLayout.LayoutParams(0, wrap(), 1f))
     }
 }
 
@@ -252,7 +261,7 @@ internal fun Context.spinnerBlock(
 }
 
 internal fun Context.editText(
-    label: String,
+    placeholder: String,
     value: String = "",
     multiLine: Boolean = false,
     isSecret: Boolean = false,
@@ -260,19 +269,23 @@ internal fun Context.editText(
 ): EditText {
     return EditText(this).apply {
         id = viewId
-        hint = label
+        hint = placeholder
         setText(value)
         setTextColor(ExampleTheme.textPrimary)
         setHintTextColor(ExampleTheme.textHint)
         setSingleLine(!multiLine)
-        minLines = if (multiLine) 4 else 1
+        textSize = 13f
+        minHeight = if (multiLine) dp(118) else dp(58)
+        minLines = if (multiLine) 3 else 1
+        gravity = if (multiLine) Gravity.TOP or Gravity.START else Gravity.CENTER_VERTICAL or Gravity.START
+        setPadding(dp(20), dp(12), dp(20), dp(12))
         inputType =
             when {
                 isSecret -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
                 multiLine -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
                 else -> InputType.TYPE_CLASS_TEXT
             }
-        background = null
+        background = rounded(ExampleTheme.surface, radius = 20, strokeColor = 0x00000000)
     }
 }
 
@@ -380,6 +393,16 @@ internal fun Context.sectionTitle(text: String): TextView {
         textSize = 13f
         typeface = Typeface.DEFAULT_BOLD
         setPadding(0, 0, 0, dp(8))
+    }
+}
+
+internal fun Context.inputLabel(text: String): TextView {
+    return TextView(this).apply {
+        this.text = text
+        setTextColor(ExampleTheme.textSecondary)
+        textSize = 14f
+        typeface = Typeface.DEFAULT_BOLD
+        setPadding(dp(20), 0, dp(20), dp(4))
     }
 }
 
