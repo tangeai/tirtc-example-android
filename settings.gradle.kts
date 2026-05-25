@@ -32,8 +32,6 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "tirtc-example-android"
-include(":example-server")
-include(":example-client")
+include(":example")
 
-project(":example-server").projectDir = file("example-server")
-project(":example-client").projectDir = file("example-client")
+project(":example").projectDir = file("example")
