@@ -7,7 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.widget.CheckBox
+import android.view.View
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -42,12 +42,10 @@ import com.tange.ai.tirtc.TiRtcConnState
 import com.tange.ai.tirtc.TiRtcConnStateListener
 import com.tange.ai.tirtc.TiRtcConnStreamMessageListener
 import com.tange.ai.tirtc.TiRtcInitOptions
+import com.tange.ai.tirtc.TiRtcInputErrorListener
 import com.tange.ai.tirtc.TiRtcInputStateListener
 import com.tange.ai.tirtc.TiRtcLogUploadCallback
 import com.tange.ai.tirtc.TiRtcLogging
-import com.tange.ai.tirtc.TiRtcOutputBufferStrategy
-import com.tange.ai.tirtc.TiRtcVideoCodec
-import com.tange.ai.tirtc.TiRtcVideoEncoderPreference
 import com.tange.ai.tirtc.TiRtcVideoFrameRate
 import com.tange.ai.tirtc.TiRtcVideoInput
 import com.tange.ai.tirtc.TiRtcVideoInputActualConfigListener
@@ -56,10 +54,8 @@ import com.tange.ai.tirtc.TiRtcVideoOutput
 import com.tange.ai.tirtc.TiRtcVideoOutputOptions
 import com.tange.ai.tirtc.TiRtcVideoOutputRenderSizeListener
 import com.tange.ai.tirtc.TiRtcVideoOutputStateListener
-import java.nio.charset.StandardCharsets
 import java.util.Timer
 import java.util.TimerTask
-import org.json.JSONObject
 
 class MainActivity : AppCompatActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -79,6 +75,13 @@ class MainActivity : AppCompatActivity() {
     private var videoOutput: TiRtcVideoOutput? = null
     private var connService: TiRtcConnService? = null
     private var acceptedConn: TiRtcConn? = null
+    private var playerAudioInput: TiRtcAudioInput? = null
+    private var playerTalkbackRunning = false
+    private var playerRunning = false
+    private var playerConfig: ClientConfiguration? = null
+    private var playerStage: FrameLayout? = null
+    private var playerLocalAudioButton: TextView? = null
+    private var playerDownlinkButton: TextView? = null
     private var audioInput: TiRtcAudioInput? = null
     private var videoInput: TiRtcVideoInput? = null
     private var metricsTimer: Timer? = null
@@ -127,13 +130,24 @@ class MainActivity : AppCompatActivity() {
         val remoteIdField = editText("待连接的远端目标 ID", clientConfig.remoteId, viewId = R.id.field_remote_id)
         val audioStreamField = editText("音频流 ID，默认 10", clientConfig.audioStreamId.toString(), viewId = R.id.field_audio_stream_id)
         val videoStreamField = editText("视频流 ID，默认 11", clientConfig.videoStreamId.toString(), viewId = R.id.field_video_stream_id)
-        val tokenField = editText("进行一次连接所需的有效 token", clientConfig.token, multiLine = true, viewId = R.id.field_token)
+        val tokenSource =
+            spinner(
+                listOf("tokenIssuer", "oneTimeToken"),
+                if (clientConfig.tokenSource == DemoTokenSource.ISSUER) 0 else 1,
+            )
+        val tokenIssuerField = editText("Token issuer base URL", clientConfig.tokenIssuerBaseUrl)
+        val tokenField =
+            editText(
+                "进行一次连接所需的一次性 token",
+                clientConfig.oneTimeToken.ifBlank { clientConfig.token },
+                multiLine = true,
+                viewId = R.id.field_token,
+            )
         setContentView(
             page {
                 header(
                     title = "Ti RTC",
                     primaryAction = "偏好设置" to { showSettings() },
-                    secondaryAction = "扫一扫" to { showClientQr(appIdField, endpointField, remoteIdField, tokenField) },
                 )
                 addViewWithMargin(fieldBlock("app_id", appIdField), bottom = 16)
                 addViewWithMargin(fieldBlock("endpoint", endpointField), bottom = 16)
@@ -147,19 +161,36 @@ class MainActivity : AppCompatActivity() {
                     ),
                     bottom = 16,
                 )
-                addViewWithMargin(fieldBlock("token", tokenField), bottom = 20)
+                addViewWithMargin(
+                    surface {
+                        addView(sectionTitle("连接 Token"))
+                        addView(inputLabel("token acquisition"))
+                        addViewWithMargin(tokenSource, bottom = 16)
+                        addViewWithMargin(fieldBlock("Token 签发服务地址", tokenIssuerField), bottom = 16)
+                        addViewWithMargin(fieldBlock("一次性连接 Token", tokenField), bottom = 12)
+                        addView(
+                            outlinedButton("扫一扫") {
+                                showClientQr(appIdField, endpointField, remoteIdField, tokenField)
+                            },
+                        )
+                    },
+                    bottom = 20,
+                )
                 addView(
-                    primaryButton("开始播放") {
-                        val next = readClientConfig(
-                            appIdField = appIdField,
-                            endpointField = endpointField,
-                            remoteIdField = remoteIdField,
-                            audioStreamField = audioStreamField,
-                            videoStreamField = videoStreamField,
-                            tokenField = tokenField,
-                        ) ?: return@primaryButton
+                    primaryButton("进入播放页面") {
+                        val next =
+                            readClientConfig(
+                                appIdField = appIdField,
+                                endpointField = endpointField,
+                                remoteIdField = remoteIdField,
+                                audioStreamField = audioStreamField,
+                                videoStreamField = videoStreamField,
+                                tokenSource = tokenSource.selectedItemPosition,
+                                tokenIssuerField = tokenIssuerField,
+                                tokenField = tokenField,
+                            ) ?: return@primaryButton
                         clientConfig = next
-                        showPlayer(next)
+                        resolveTokenAndShowPlayer(next)
                     },
                 )
                 addView(
@@ -173,86 +204,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun showSettings() {
         clearActiveScanner()
-        val console = CheckBox(this).apply {
-            text = "Console log"
-            isChecked = settings.consoleLogEnabled
-            setTextColor(ExampleTheme.textPrimary)
-        }
-        val decoder = spinner(DecoderPreference.values().map { it.label }, settings.decoderPreference.ordinal)
-        val buffer =
-            spinner(
-                listOf("Automatic", "NoBuffer"),
-                if (settings.outputBufferStrategy == TiRtcOutputBufferStrategy.NO_BUFFER) 1 else 0,
-            )
-        val facing =
-            spinner(
-                listOf("Front", "Back"),
-                if (settings.cameraFacing == TiRtcCameraFacing.BACK) 1 else 0,
-            )
-        val codec =
-            spinner(
-                listOf("H264", "H265", "MJPEG"),
-                when (settings.videoCodec) {
-                    TiRtcVideoCodec.H265 -> 1
-                    TiRtcVideoCodec.MJPEG -> 2
-                    TiRtcVideoCodec.H264 -> 0
-                },
-            )
-        val encoder =
-            spinner(
-                listOf("Auto", "Software", "Hardware"),
-                when (settings.encoderPreference) {
-                    TiRtcVideoEncoderPreference.SOFTWARE -> 1
-                    TiRtcVideoEncoderPreference.HARDWARE -> 2
-                    TiRtcVideoEncoderPreference.AUTO -> 0
-                },
-            )
-        setContentView(
-            page {
-                navigationHeader("偏好设置") { showConfigure() }
-                addView(sectionTitle("Client"))
-                addView(spinnerBlock("Decoder preference", decoder))
-                addView(spinnerBlock("Output buffer policy", buffer))
-                addView(sectionTitle("Device"))
-                addView(spinnerBlock("Camera facing", facing))
-                addView(spinnerBlock("Video codec", codec))
-                addView(spinnerBlock("Encoder preference", encoder))
-                addView(sectionTitle("Logging"))
-                addView(surface { addView(console) })
-                addView(
-                    primaryButton("保存") {
-                        settings =
-                            ExampleSettings(
-                                decoderPreference = DecoderPreference.values()[decoder.selectedItemPosition],
-                                outputBufferStrategy =
-                                    if (buffer.selectedItemPosition == 1) {
-                                        TiRtcOutputBufferStrategy.NO_BUFFER
-                                    } else {
-                                        TiRtcOutputBufferStrategy.AUTOMATIC
-                                    },
-                                cameraFacing =
-                                    if (facing.selectedItemPosition == 1) {
-                                        TiRtcCameraFacing.BACK
-                                    } else {
-                                        TiRtcCameraFacing.FRONT
-                                    },
-                                videoCodec =
-                                    when (codec.selectedItemPosition) {
-                                        1 -> TiRtcVideoCodec.H265
-                                        2 -> TiRtcVideoCodec.MJPEG
-                                        else -> TiRtcVideoCodec.H264
-                                    },
-                                encoderPreference =
-                                    when (encoder.selectedItemPosition) {
-                                        1 -> TiRtcVideoEncoderPreference.SOFTWARE
-                                        2 -> TiRtcVideoEncoderPreference.HARDWARE
-                                        else -> TiRtcVideoEncoderPreference.AUTO
-                                    },
-                                consoleLogEnabled = console.isChecked,
-                            )
-                        showConfigure()
-                    },
-                )
+        showExampleSettingsPage(
+            settings = settings,
+            onBack = { showConfigure() },
+            onSave = { next ->
+                settings = next
+                showConfigure()
             },
         )
     }
@@ -271,10 +228,10 @@ class MainActivity : AppCompatActivity() {
             )
         val scannerView =
             qrScannerView { raw ->
-                val payload = parseClientQr(raw) ?: return@qrScannerView false
+                val payload = parseClientQrPayload(raw, clientConfig, ::toast) ?: return@qrScannerView false
                 appIdField.setText(payload.appId)
                 remoteIdField.setText(payload.remoteId)
-                tokenField.setText(payload.token)
+                tokenField.setText(payload.oneTimeToken)
                 if (payload.endpoint.isNotBlank()) {
                     endpointField.setText(payload.endpoint)
                 }
@@ -293,10 +250,10 @@ class MainActivity : AppCompatActivity() {
                 )
                 addView(
                     primaryButton("解析并填充") {
-                        val payload = parseClientQr(payloadField.text.toString()) ?: return@primaryButton
+                        val payload = parseClientQrPayload(payloadField.text.toString(), clientConfig, ::toast) ?: return@primaryButton
                         appIdField.setText(payload.appId)
                         remoteIdField.setText(payload.remoteId)
-                        tokenField.setText(payload.token)
+                        tokenField.setText(payload.oneTimeToken)
                         if (payload.endpoint.isNotBlank()) {
                             endpointField.setText(payload.endpoint)
                         }
@@ -313,33 +270,54 @@ class MainActivity : AppCompatActivity() {
         clearActiveScanner()
         val videoStage = videoPanel("远端视频")
         val status = body("正在初始化")
-        val metrics = DownlinkMetricsPanel(
-            context = this,
-            requestedDecoderPreference = settings.decoderPreference.nativeValue,
-            onShowExplanation = { showMetricsExplanation() },
-        )
+        val metrics =
+            DownlinkMetricsPanel(
+                context = this,
+                requestedDecoderPreference = settings.decoderPreference.nativeValue,
+                onShowExplanation = { showMetricsExplanation() },
+            )
         val bubble = streamBubbleView("等待 stream message")
+        val localAudioButton =
+            compactFilledButton(
+                text = "启动麦克风",
+                backgroundColor = ExampleTheme.surface,
+                foregroundColor = ExampleTheme.primary,
+            ) {
+                togglePlayerTalkback()
+            }
+        val downlinkButton =
+            compactFilledButton("连接中") {
+                togglePlayerDownlink()
+            }
+        playerConfig = config
+        playerStage = videoStage
+        playerLocalAudioButton = localAudioButton
+        playerDownlinkButton = downlinkButton
         statusView = status
         metricsView = null
         downlinkMetricsPanel = metrics
         streamBubble = bubble
+        setPlayerControlState(connecting = true, running = false, localAudioEnabled = false)
         setContentView(
             frameScreen(
-                top = playerTopBar(
-                    remoteId = config.remoteId,
-                    onCommand = { showCommandPanel() },
-                    onUploadLogs = { uploadLogs() },
-                ),
+                top =
+                    playerTopBar(
+                        remoteId = config.remoteId,
+                        onBack = {
+                            stopPlayer()
+                            showConfigure()
+                        },
+                        onCommand = { showCommandPanel() },
+                        onUploadLogs = { uploadLogs() },
+                    ),
                 stage = videoStage,
                 overlay = metrics,
-                bottom = bottomControls(
-                    bubble = bubble,
-                    actionText = "停止播放",
-                    action = {
-                        stopPlayer()
-                        showConfigure()
-                    },
-                ),
+                bottom =
+                    playerBottomControls(
+                        bubble = bubble,
+                        localAudioButton = localAudioButton,
+                        downlinkButton = downlinkButton,
+                    ),
             ),
         )
         startPlayer(config, videoStage)
@@ -364,7 +342,7 @@ class MainActivity : AppCompatActivity() {
                     },
                 )
                 addView(
-                    primaryButton("启动设备端") {
+                    primaryButton("进入设备端") {
                         val next =
                             DeviceConfiguration(
                                 endpoint = endpointField.text.toString().trim(),
@@ -391,7 +369,7 @@ class MainActivity : AppCompatActivity() {
         val payloadField = editText(DEVICE_QR_SAMPLE, DEVICE_QR_SAMPLE, multiLine = true)
         val scannerView =
             qrScannerView { raw ->
-                val payload = parseDeviceQr(raw) ?: return@qrScannerView false
+                val payload = parseDeviceQrPayload(raw, ::toast) ?: return@qrScannerView false
                 endpointField.setText(payload.endpoint)
                 deviceIdField.setText(payload.deviceId)
                 secretField.setText(payload.deviceSecretKey)
@@ -410,7 +388,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 addView(
                     primaryButton("解析并填充") {
-                        val payload = parseDeviceQr(payloadField.text.toString()) ?: return@primaryButton
+                        val payload = parseDeviceQrPayload(payloadField.text.toString(), ::toast) ?: return@primaryButton
                         endpointField.setText(payload.endpoint)
                         deviceIdField.setText(payload.deviceId)
                         secretField.setText(payload.deviceSecretKey)
@@ -435,21 +413,18 @@ class MainActivity : AppCompatActivity() {
         streamBubble = bubble
         setContentView(
             frameScreen(
-                top = deviceTopBar(
-                    secret = maskSecret(config.deviceSecretKey),
-                    onCommand = { showCommandPanel() },
-                    onUploadLogs = { uploadLogs() },
-                ),
+                top =
+                    deviceTopBar(
+                        deviceId = config.deviceId,
+                        onBack = {
+                            stopDevice()
+                            showDeviceConfigure()
+                        },
+                        onCommand = { showCommandPanel() },
+                        onUploadLogs = { uploadLogs() },
+                    ),
                 stage = preview,
-                overlay = deviceStatusSurface(metrics),
-                bottom = bottomControls(
-                    bubble = bubble,
-                    actionText = "停止设备端",
-                    action = {
-                        stopDevice()
-                        showDeviceConfigure()
-                    },
-                ),
+                overlay = View(this),
             ),
         )
         startDevice(config, preview)
@@ -470,35 +445,48 @@ class MainActivity : AppCompatActivity() {
             )
         appendStatus("initialize code=$initCode")
         if (initCode != 0) {
+            setPlayerControlState(connecting = false, running = false, localAudioEnabled = false)
             return
         }
         val nextConn = TiRtcConn()
         val nextAudio = TiRtcAudioOutput()
         val nextVideo = TiRtcVideoOutput()
+        val nextTalkback = TiRtcAudioInput()
         conn = nextConn
         audioOutput = nextAudio
         videoOutput = nextVideo
+        playerAudioInput = nextTalkback
+        playerTalkbackRunning = false
         nextAudio.onStateChanged = TiRtcAudioOutputStateListener { state -> appendStatus("audio=${state.name}") }
         nextVideo.onStateChanged = TiRtcVideoOutputStateListener { state -> appendStatus("video=${state.name}") }
+        nextTalkback.onStateChanged = TiRtcInputStateListener { state -> appendStatus("talkback=${state.name}") }
+        nextTalkback.onError = TiRtcInputErrorListener { code, message ->
+            appendStatus("talkback error=$code ${message ?: ""}")
+        }
         nextVideo.onRenderSizeChanged =
             TiRtcVideoOutputRenderSizeListener { size -> appendStatus("video size=${size.width}x${size.height}") }
-        nextConn.onCommand = TiRtcConnCommandListener { command, data ->
-            appendCommand("received", command, data)
-            nextConn.sendCommand(command, data)
-        }
-        nextConn.onStreamMessage = TiRtcConnStreamMessageListener { streamId, _, data ->
-            updateStreamBubble("stream $streamId: ${String(data, StandardCharsets.UTF_8)}")
-        }
-        nextConn.onStateChanged = TiRtcConnStateListener { state, code ->
-            appendStatus("conn=${state.name} code=$code")
-            if (state == TiRtcConnState.CONNECTED) {
-                val audioCode = nextAudio.attach(nextConn, config.audioStreamId)
-                val videoCode = nextVideo.attach(nextConn, config.videoStreamId)
-                nextConn.subscribeAudio(config.audioStreamId)
-                nextConn.subscribeVideo(config.videoStreamId)
-                appendStatus("attach audio=$audioCode video=$videoCode")
+        nextConn.onCommand =
+            TiRtcConnCommandListener { command, data ->
+                handleIncomingCommand(nextConn, command, data)
             }
-        }
+        nextConn.onStreamMessage =
+            TiRtcConnStreamMessageListener { streamId, _, data ->
+                updateStreamBubble("stream $streamId: ${payloadText(data)}")
+            }
+        nextConn.onStateChanged =
+            TiRtcConnStateListener { state, code ->
+                appendStatus("conn=${state.name} code=$code")
+                if (state == TiRtcConnState.CONNECTED) {
+                    setPlayerControlState(connecting = false, running = true, localAudioEnabled = true)
+                    val audioCode = nextAudio.attach(nextConn, config.audioStreamId)
+                    val videoCode = nextVideo.attach(nextConn, config.videoStreamId)
+                    nextConn.subscribeAudio(config.audioStreamId)
+                    nextConn.subscribeVideo(config.videoStreamId)
+                    appendStatus("attach audio=$audioCode video=$videoCode")
+                    appendStatus("talkback ready stream=${settings.localAudioStreamId}")
+                }
+            }
+        nextTalkback.setOptions(settings.localAudioOptions())
         nextAudio.configure(TiRtcAudioOutputOptions(bufferStrategy = settings.outputBufferStrategy))
         nextVideo.setOptions(
             TiRtcVideoOutputOptions(
@@ -556,34 +544,128 @@ class MainActivity : AppCompatActivity() {
         service.onStarted = TiRtcConnServiceStartedListener { appendStatus("service=started") }
         service.onStopped = TiRtcConnServiceStoppedListener { appendStatus("service=stopped") }
         service.onError = TiRtcConnServiceErrorListener { code, message -> appendStatus("service error=$code ${message ?: ""}") }
-        service.onConnected = TiRtcConnServiceConnectedListener { connected ->
-            acceptedConn = connected
-            appendStatus("accepted connection")
-            connected.onCommand = TiRtcConnCommandListener { command, data ->
-                appendCommand("received", command, data)
-                connected.sendCommand(command, data)
+        service.onConnected =
+            TiRtcConnServiceConnectedListener { connected ->
+                acceptedConn = connected
+                appendStatus("accepted connection")
+                connected.onCommand =
+                    TiRtcConnCommandListener { command, data ->
+                        handleIncomingCommand(connected, command, data)
+                    }
+                connected.onStreamMessage =
+                    TiRtcConnStreamMessageListener { streamId, _, data ->
+                        updateStreamBubble("stream $streamId: ${payloadText(data)}")
+                    }
+                appendStatus("attach mic=${nextAudioInput.attach(connected, DEFAULT_AUDIO_STREAM_ID)}")
+                appendStatus("attach camera=${nextVideoInput.attach(connected, DEFAULT_VIDEO_STREAM_ID)}")
+                startStreamMessages(connected)
             }
-            connected.onStreamMessage = TiRtcConnStreamMessageListener { streamId, _, data ->
-                updateStreamBubble("stream $streamId: ${String(data, StandardCharsets.UTF_8)}")
-            }
-            appendStatus("attach mic=${nextAudioInput.attach(connected, DEFAULT_AUDIO_STREAM_ID)}")
-            appendStatus("attach camera=${nextVideoInput.attach(connected, DEFAULT_VIDEO_STREAM_ID)}")
-            startStreamMessages(connected)
-        }
         appendStatus("service start=${service.start()}")
     }
 
-    private fun stopPlayer() {
+    private fun stopPlayer(clearPageRefs: Boolean = true) {
         metricsTimer?.cancel()
         metricsTimer = null
-        downlinkMetricsPanel = null
+        stopPlayerTalkback()
+        playerAudioInput?.dispose()
+        playerAudioInput = null
+        playerTalkbackRunning = false
         videoOutput?.dispose()
         videoOutput = null
         audioOutput?.dispose()
         audioOutput = null
         conn?.dispose()
         conn = null
+        playerRunning = false
+        setPlayerControlState(connecting = false, running = false, localAudioEnabled = false)
+        if (clearPageRefs) {
+            downlinkMetricsPanel = null
+            playerConfig = null
+            playerStage = null
+            playerLocalAudioButton = null
+            playerDownlinkButton = null
+        }
         TiRtc.shutdown()
+    }
+
+    private fun togglePlayerDownlink() {
+        if (playerRunning) {
+            stopPlayer(clearPageRefs = false)
+            appendStatus("Downlink stopped.")
+            return
+        }
+        val config = playerConfig ?: return
+        val stage = playerStage ?: return
+        setPlayerControlState(connecting = true, running = false, localAudioEnabled = false)
+        startPlayer(config, stage)
+    }
+
+    private fun togglePlayerTalkback() {
+        if (playerTalkbackRunning) {
+            stopPlayerTalkback()
+        } else {
+            startPlayerTalkback()
+        }
+    }
+
+    private fun startPlayerTalkback() {
+        val connection = conn
+        val input = playerAudioInput
+        if (connection == null || input == null || connection.state != TiRtcConnState.CONNECTED) {
+            appendStatus("talkback waiting for connected client")
+            return
+        }
+        val optionsCode = input.setOptions(settings.localAudioOptions())
+        if (optionsCode != 0) {
+            appendStatus("talkback options=$optionsCode")
+            return
+        }
+        val attachCode = input.attach(connection, settings.localAudioStreamId)
+        if (attachCode != 0) {
+            appendStatus("talkback attach=$attachCode")
+            return
+        }
+        val startCode = input.start()
+        playerTalkbackRunning = startCode == 0
+        updatePlayerLocalAudioButton(enabled = true)
+        appendStatus("talkback start=$startCode stream=${settings.localAudioStreamId}")
+    }
+
+    private fun stopPlayerTalkback() {
+        val input = playerAudioInput ?: return
+        val connection = conn
+        val detachCode = if (connection != null) input.detach(connection) else 0
+        val stopCode = input.stop()
+        playerTalkbackRunning = false
+        updatePlayerLocalAudioButton(enabled = connection?.state == TiRtcConnState.CONNECTED)
+        appendStatus("talkback stop=$stopCode detach=$detachCode")
+    }
+
+    private fun setPlayerControlState(
+        connecting: Boolean,
+        running: Boolean,
+        localAudioEnabled: Boolean,
+    ) {
+        playerRunning = running
+        playerDownlinkButton?.apply {
+            text =
+                when {
+                    connecting -> "连接中"
+                    running -> "停止播放"
+                    else -> "开始播放"
+                }
+            isEnabled = !connecting
+            alpha = if (isEnabled) 1.0f else 0.55f
+        }
+        updatePlayerLocalAudioButton(enabled = localAudioEnabled)
+    }
+
+    private fun updatePlayerLocalAudioButton(enabled: Boolean) {
+        playerLocalAudioButton?.apply {
+            text = if (playerTalkbackRunning) "停止麦克风" else "启动麦克风"
+            isEnabled = enabled
+            alpha = if (enabled) 1.0f else 0.55f
+        }
     }
 
     private fun stopDevice() {
@@ -625,7 +707,7 @@ class MainActivity : AppCompatActivity() {
                         override fun run() {
                             val payload = "android-device ${System.currentTimeMillis()}".toByteArray()
                             connection.sendStreamMessage(DEFAULT_VIDEO_STREAM_ID, System.currentTimeMillis(), payload)
-                            mainHandler.post { updateStreamBubble(String(payload, StandardCharsets.UTF_8)) }
+                            mainHandler.post { updateStreamBubble(payloadText(payload)) }
                         }
                     },
                     STREAM_MESSAGE_PERIOD_MS,
@@ -650,9 +732,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showCommandPanel() {
-        val commandField = editText("0x00000000", "0x54524343")
+        val commandField = editText("0x00000000", formatCommandId(DEMO_CALL_COMMAND_ID))
+        val preset = spinner(listOf("echo", CALL_START, CALL_READY, CALL_REJECT), 0)
         val mode = spinner(listOf("text", "hex"), 0)
-        val payloadField = editText("输入文本内容", "echo", multiLine = true)
+        val payloadField = editText("输入文本内容", CALL_START, multiLine = true)
         val history = body(commandHistory)
         commandHistoryView = history
         val root =
@@ -660,6 +743,7 @@ class MainActivity : AppCompatActivity() {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(16), dp(10), dp(16), 0)
                 addViewWithMargin(fieldBlock("命令 ID", commandField), bottom = 16)
+                addView(spinnerBlock("call command schema", preset))
                 addView(spinnerBlock("payload mode", mode))
                 addViewWithMargin(fieldBlock("命令内容", payloadField), bottom = 16)
                 addView(sectionTitle("history"))
@@ -670,12 +754,14 @@ class MainActivity : AppCompatActivity() {
             .setView(root)
             .setNegativeButton("关闭", null)
             .setPositiveButton("发送") { _, _ ->
-                val command = parseCommandId(commandField.text.toString()) ?: return@setPositiveButton
+                val command = parseCommandIdOrNull(commandField.text.toString(), ::toast) ?: return@setPositiveButton
                 val payload =
-                    if (mode.selectedItemPosition == 1) {
-                        parseHex(payloadField.text.toString()) ?: return@setPositiveButton
+                    if (preset.selectedItemPosition > 0) {
+                        utf8Payload(demoCommandPresetPayload(preset.selectedItemPosition))
+                    } else if (mode.selectedItemPosition == 1) {
+                        parseHexPayloadOrNull(payloadField.text.toString(), ::toast) ?: return@setPositiveButton
                     } else {
-                        payloadField.text.toString().toByteArray(StandardCharsets.UTF_8)
+                        utf8Payload(payloadField.text.toString())
                     }
                 val code = (conn ?: acceptedConn)?.sendCommand(command, payload) ?: -1
                 appendCommand("sent code=$code", command, payload)
@@ -698,13 +784,25 @@ class MainActivity : AppCompatActivity() {
         remoteIdField: EditText,
         audioStreamField: EditText,
         videoStreamField: EditText,
+        tokenSource: Int,
+        tokenIssuerField: EditText,
         tokenField: EditText,
     ): ClientConfiguration? {
         val appId = appIdField.text.toString().trim()
         val remoteId = remoteIdField.text.toString().trim()
-        val token = tokenField.text.toString().trim()
-        if (appId.isBlank() || remoteId.isBlank() || token.isBlank()) {
-            toast("请先填写 app_id、remote_id 和 token")
+        val source = if (tokenSource == 0) DemoTokenSource.ISSUER else DemoTokenSource.ONE_TIME
+        val tokenIssuerBaseUrl = tokenIssuerField.text.toString().trim()
+        val oneTimeToken = tokenField.text.toString().trim()
+        if (appId.isBlank() || remoteId.isBlank()) {
+            toast("请先填写 app_id 和 remote_id")
+            return null
+        }
+        if (source == DemoTokenSource.ISSUER && tokenIssuerBaseUrl.isBlank()) {
+            toast("请填写 tokenIssuerBaseUrl")
+            return null
+        }
+        if (source == DemoTokenSource.ONE_TIME && oneTimeToken.isBlank()) {
+            toast("请填写 oneTimeToken")
             return null
         }
         return ClientConfiguration(
@@ -713,58 +811,39 @@ class MainActivity : AppCompatActivity() {
             remoteId = remoteId,
             audioStreamId = audioStreamField.text.toString().toIntOrNull() ?: DEFAULT_AUDIO_STREAM_ID,
             videoStreamId = videoStreamField.text.toString().toIntOrNull() ?: DEFAULT_VIDEO_STREAM_ID,
-            token = token,
+            token = oneTimeToken,
+            tokenSource = source,
+            tokenIssuerBaseUrl = tokenIssuerBaseUrl,
+            oneTimeToken = oneTimeToken,
         )
     }
 
-    private fun parseClientQr(payload: String): ClientConfiguration? {
-        return try {
-            val json = JSONObject(payload)
-            val appId = json.optString("app_id").trim()
-            val remoteId = json.optString("remote_id").trim()
-            val token = json.optString("token").trim()
-            if (appId.isBlank() || remoteId.isBlank() || token.isBlank()) {
-                toast("二维码缺少 app_id、remote_id 或 token")
-                null
-            } else {
-                clientConfig.copy(
-                    appId = appId,
-                    endpoint = json.optString("endpoint").trim(),
-                    remoteId = remoteId,
-                    token = token,
-                )
+    private fun resolveTokenAndShowPlayer(config: ClientConfiguration) {
+        if (config.tokenSource == DemoTokenSource.ONE_TIME) {
+            try {
+                val resolved = resolveDemoToken(config)
+                clientConfig = resolved
+                showPlayer(resolved)
+            } catch (error: Exception) {
+                toast("token 无效：${error.message}")
             }
-        } catch (error: Exception) {
-            toast("二维码 JSON 无效：${error.message}")
-            null
+            return
         }
-    }
-
-    private fun parseDeviceQr(payload: String): DeviceConfiguration? {
-        return try {
-            val json = JSONObject(payload)
-            val allowed = setOf("endpoint", "device_id", "device_secret_key")
-            val keys = json.keys().asSequence().toSet()
-            if (!allowed.containsAll(keys)) {
-                toast("设备端二维码包含未允许字段")
-                return null
+        toast("token acquisition=start")
+        Thread {
+            val result =
+                runCatching {
+                    resolveDemoToken(config)
+                }
+            mainHandler.post {
+                result
+                    .onSuccess { resolved ->
+                        clientConfig = resolved
+                        showPlayer(resolved)
+                    }
+                    .onFailure { error -> toast("token issuer 失败：${error.message}") }
             }
-            val deviceId = json.optString("device_id").trim()
-            val secret = json.optString("device_secret_key")
-            if (deviceId.isBlank() || secret.isBlank()) {
-                toast("二维码缺少 device_id 或 device_secret_key")
-                null
-            } else {
-                DeviceConfiguration(
-                    endpoint = json.optString("endpoint").trim(),
-                    deviceId = deviceId,
-                    deviceSecretKey = secret,
-                )
-            }
-        } catch (error: Exception) {
-            toast("二维码 JSON 无效：${error.message}")
-            null
-        }
+        }.start()
     }
 
     private fun appendStatus(message: String) {
@@ -779,10 +858,21 @@ class MainActivity : AppCompatActivity() {
         command: Long,
         payload: ByteArray,
     ) {
-        val line = "$direction ${formatCommand(command)} ${String(payload, StandardCharsets.UTF_8)}"
+        val line = "$direction ${formatCommandId(command)} ${payloadText(payload)}"
         commandHistory = if (commandHistory == "暂无命令记录") line else "$line\n$commandHistory"
         commandHistoryView?.text = commandHistory
         appendStatus(line)
+    }
+
+    private fun handleIncomingCommand(
+        connection: TiRtcConn,
+        command: Long,
+        payload: ByteArray,
+    ) {
+        appendCommand("received", command, payload)
+        val responsePayload = demoCommandResponsePayload(command, payload) ?: return
+        val code = connection.sendCommand(command, responsePayload)
+        appendCommand("sent code=$code", command, responsePayload)
     }
 
     private fun updateStreamBubble(text: String) {
@@ -841,41 +931,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun parseCommandId(text: String): Long? {
-        val trimmed = text.trim()
-        val value =
-            if (trimmed.startsWith("0x", ignoreCase = true)) {
-                trimmed.removePrefix("0x").removePrefix("0X").toLongOrNull(16)
-            } else {
-                trimmed.toLongOrNull()
-            }
-        if (value == null || value !in 0..MAX_COMMAND_ID) {
-            toast("命令 ID 必须是 32 位无符号整数")
-            return null
-        }
-        return value
-    }
-
-    private fun parseHex(text: String): ByteArray? {
-        val compact = text.filterNot { it.isWhitespace() }
-        if (compact.length % 2 != 0 || !compact.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) {
-            toast("HEX 内容必须是偶数位有效字符")
-            return null
-        }
-        return ByteArray(compact.length / 2) { index ->
-            compact.substring(index * 2, index * 2 + 2).toInt(16).toByte()
-        }
-    }
-
-    private fun formatCommand(command: Long): String = "0x${command.toString(16).uppercase()}"
-
-    private fun maskSecret(value: String): String {
-        if (value.length <= 4) {
-            return "****"
-        }
-        return "${value.take(2)}****${value.takeLast(2)}"
-    }
-
     private fun toast(text: String) {
         Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
     }
@@ -886,7 +941,6 @@ class MainActivity : AppCompatActivity() {
         private const val METRICS_PERIOD_MS = 1000L
         private const val STREAM_MESSAGE_PERIOD_MS = 3000L
         private const val SCANNER_RETRY_DELAY_MS = 900L
-        private const val MAX_COMMAND_ID = 0xFFFF_FFFFL
         private const val CLIENT_QR_SAMPLE =
             "{\n" +
                 "  \"app_id\": \"demo-app\",\n" +

@@ -3,6 +3,7 @@ package com.tange.ai.tirtc.example
 import android.content.Context
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.text.TextUtils
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -34,7 +35,7 @@ internal fun Context.frameScreen(
     top: View,
     stage: FrameLayout,
     overlay: View,
-    bottom: View,
+    bottom: View? = null,
 ): FrameLayout {
     return FrameLayout(this).apply {
         setBackgroundColor(ExampleTheme.videoBackground)
@@ -48,14 +49,16 @@ internal fun Context.frameScreen(
                 rightMargin = dp(18)
             },
         )
-        addView(bottom, FrameLayout.LayoutParams(match(), wrap(), Gravity.BOTTOM))
+        if (bottom != null) {
+            addView(bottom, FrameLayout.LayoutParams(match(), wrap(), Gravity.BOTTOM))
+        }
     }
 }
 
 internal fun LinearLayout.header(
     title: String,
     primaryAction: Pair<String, () -> Unit>,
-    secondaryAction: Pair<String, () -> Unit>,
+    secondaryAction: Pair<String, () -> Unit>? = null,
 ) {
     val row =
         LinearLayout(context).apply {
@@ -71,7 +74,9 @@ internal fun LinearLayout.header(
                 LinearLayout.LayoutParams(0, wrap(), 1f),
             )
             addView(context.chipButton(primaryAction.first, primaryAction.second), context.chipLayoutParams())
-            addView(context.chipButton(secondaryAction.first, secondaryAction.second), context.chipLayoutParams())
+            if (secondaryAction != null) {
+                addView(context.chipButton(secondaryAction.first, secondaryAction.second), context.chipLayoutParams())
+            }
         }
     addViewWithMargin(row, bottom = 20)
 }
@@ -101,6 +106,7 @@ internal fun LinearLayout.navigationHeader(
 
 internal fun Context.playerTopBar(
     remoteId: String,
+    onBack: () -> Unit,
     onCommand: () -> Unit,
     onUploadLogs: () -> Unit,
 ): View {
@@ -109,22 +115,26 @@ internal fun Context.playerTopBar(
         orientation = LinearLayout.HORIZONTAL
         setPadding(dp(16), statusBarInset() + dp(12), dp(12), dp(10))
         setBackgroundColor(ExampleTheme.background)
+        addView(appBarBackButton(onBack), appBarBackLayoutParams())
         addView(
             TextView(context).apply {
                 text = remoteId
                 setTextColor(ExampleTheme.primary)
                 textSize = 14f
                 typeface = Typeface.DEFAULT_BOLD
+                setSingleLine(true)
+                ellipsize = TextUtils.TruncateAt.END
             },
             LinearLayout.LayoutParams(0, wrap(), 1f),
         )
-        addView(chipButton("发送命令", onCommand), chipLayoutParams())
-        addView(chipButton("上传日志", onUploadLogs), chipLayoutParams())
+        addView(appBarActionButton("发送命令", onCommand), appBarActionLayoutParams())
+        addView(appBarActionButton("上传日志", onUploadLogs), appBarActionLayoutParams())
     }
 }
 
 internal fun Context.deviceTopBar(
-    secret: String,
+    deviceId: String,
+    onBack: () -> Unit,
     onCommand: () -> Unit,
     onUploadLogs: () -> Unit,
 ): View {
@@ -133,31 +143,78 @@ internal fun Context.deviceTopBar(
         orientation = LinearLayout.HORIZONTAL
         setPadding(dp(16), statusBarInset() + dp(12), dp(12), dp(10))
         setBackgroundColor(ExampleTheme.background)
+        addView(appBarBackButton(onBack), appBarBackLayoutParams())
         addView(
             TextView(context).apply {
-                text = "设备端 $secret"
+                text = deviceId
                 setTextColor(ExampleTheme.primary)
                 textSize = 14f
                 typeface = Typeface.DEFAULT_BOLD
+                setSingleLine(true)
+                ellipsize = TextUtils.TruncateAt.END
             },
             LinearLayout.LayoutParams(0, wrap(), 1f),
         )
-        addView(chipButton("发送命令", onCommand), chipLayoutParams())
-        addView(chipButton("上传日志", onUploadLogs), chipLayoutParams())
+        addView(appBarActionButton("发送命令", onCommand), appBarActionLayoutParams())
+        addView(appBarActionButton("上传日志", onUploadLogs), appBarActionLayoutParams())
     }
 }
 
-internal fun Context.bottomControls(
+internal fun Context.playerBottomControls(
     bubble: TextView,
-    actionText: String,
-    action: () -> Unit,
+    localAudioButton: TextView,
+    downlinkButton: TextView,
 ): View {
     return LinearLayout(this).apply {
         gravity = Gravity.END
         orientation = LinearLayout.VERTICAL
         setPadding(dp(20), dp(16), dp(20), dp(24))
-        addView(bubble)
-        addViewWithMargin(primaryButton(actionText, action), top = 12)
+        addView(
+            bubble,
+            LinearLayout.LayoutParams(wrap(), wrap()).apply {
+                gravity = Gravity.END
+            },
+        )
+        addViewWithMargin(
+            LinearLayout(context).apply {
+                gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                orientation = LinearLayout.HORIZONTAL
+                addView(localAudioButton, context.compactButtonLayoutParams())
+                addView(downlinkButton, context.compactButtonLayoutParams())
+            },
+            top = 12,
+            bottom = 0,
+        )
+    }
+}
+
+internal fun Context.appBarActionButton(
+    text: String,
+    action: () -> Unit,
+): TextView {
+    return TextView(this).apply {
+        this.text = text
+        gravity = Gravity.CENTER
+        setTextColor(ExampleTheme.primary)
+        textSize = 12f
+        typeface = Typeface.DEFAULT_BOLD
+        background = rounded(ExampleTheme.background, radius = 10, strokeColor = ExampleTheme.primary)
+        setPadding(dp(12), 0, dp(12), 0)
+        setSingleLine(true)
+        setOnClickListener { action() }
+    }
+}
+
+internal fun Context.appBarBackButton(action: () -> Unit): TextView {
+    return TextView(this).apply {
+        text = "‹"
+        contentDescription = "返回"
+        gravity = Gravity.CENTER
+        setTextColor(ExampleTheme.primary)
+        textSize = 30f
+        typeface = Typeface.DEFAULT_BOLD
+        background = rounded(ExampleTheme.background, radius = 22, strokeColor = ExampleTheme.inputBorder)
+        setOnClickListener { action() }
     }
 }
 
@@ -336,6 +393,26 @@ internal fun Context.primaryButton(
     }
 }
 
+internal fun Context.compactFilledButton(
+    text: String,
+    backgroundColor: Int = ExampleTheme.primary,
+    foregroundColor: Int = ExampleTheme.foreground,
+    action: () -> Unit,
+): TextView {
+    return TextView(this).apply {
+        this.text = text
+        gravity = Gravity.CENTER
+        minHeight = dp(54)
+        minWidth = dp(116)
+        setTextColor(foregroundColor)
+        textSize = 14f
+        typeface = Typeface.DEFAULT_BOLD
+        background = rounded(backgroundColor, radius = 28, strokeColor = backgroundColor)
+        setPadding(dp(16), dp(12), dp(16), dp(12))
+        setOnClickListener { action() }
+    }
+}
+
 internal fun Context.outlinedButton(
     text: String,
     action: () -> Unit,
@@ -442,6 +519,24 @@ internal fun LinearLayout.addViewWithMargin(
             bottomMargin = bottom
         },
     )
+}
+
+private fun Context.compactButtonLayoutParams(): LinearLayout.LayoutParams {
+    return LinearLayout.LayoutParams(wrap(), wrap()).apply {
+        leftMargin = dp(12)
+    }
+}
+
+private fun Context.appBarBackLayoutParams(): LinearLayout.LayoutParams {
+    return LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+        rightMargin = dp(8)
+    }
+}
+
+private fun Context.appBarActionLayoutParams(): LinearLayout.LayoutParams {
+    return LinearLayout.LayoutParams(wrap(), dp(36)).apply {
+        leftMargin = dp(8)
+    }
 }
 
 private fun Context.rounded(

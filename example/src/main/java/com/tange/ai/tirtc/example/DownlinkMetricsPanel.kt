@@ -92,19 +92,19 @@ internal class DownlinkMetricsPanel(
 
         avParameters.value.text =
             "分辨率 ${displayVideoSize(videoDebug)} / 视频 ${displayVideoCodec(videoDebug?.codec)} / " +
-                "音频 ${displayAudioCodec(audioDebug?.codec)} / ${displayVideoDecoder(videoDebug)}"
+            "音频 ${displayAudioCodec(audioDebug?.codec)} / ${displayVideoDecoder(videoDebug)}"
         videoReceive.value.text =
             "码率 ${formatKbps(videoMetrics?.inputBitrateKbps)} / " +
-                "接收 ${formatRate(videoMetrics?.inputFps, "帧/秒")} / " +
-                "渲染 ${formatRate(videoMetrics?.renderFps, "帧/秒")}"
+            "接收 ${formatRate(videoMetrics?.inputFps, "帧/秒")} / " +
+            "渲染 ${formatRate(videoMetrics?.renderFps, "帧/秒")}"
         audioReceive.value.text =
             "码率 ${formatKbps(audioMetrics?.inputBitrateKbps)} / " +
-                "音频包 ${formatRate(audioMetrics?.inputPacketRate, "个/秒")}"
+            "音频包 ${formatRate(audioMetrics?.inputPacketRate, "个/秒")}"
         audioStutter.value.text =
-                "最近 ${formatCount(audioMetrics?.stutter?.recentWindowStutterCount)} / " +
-                "累计 ${formatDuration(audioMetrics?.stutter?.recentWindowStutterTotalMs)} / " +
-                "最长 ${formatDuration(audioMetrics?.stutter?.recentWindowStutterPeakMs)} / " +
-                (if (audioOutputHealthOk(audioMetrics)) "稳定" else "断续风险")
+            "最近 ${formatCount(audioMetrics?.stutter?.recentWindowStutterCount)} / " +
+            "累计 ${formatDuration(audioMetrics?.stutter?.recentWindowStutterTotalMs)} / " +
+            "最长 ${formatDuration(audioMetrics?.stutter?.recentWindowStutterPeakMs)} / " +
+            (if (audioOutputHealthOk(audioMetrics)) "稳定" else "断续风险")
         videoLatency.value.text = formatLocalLatency(videoMetrics?.localLatency)
         audioLatency.value.text = formatLocalLatency(audioMetrics?.localLatency)
         connectDuration.value.text = formatDuration(connMetrics?.connectDurationMs)
@@ -193,8 +193,8 @@ internal class DownlinkMetricsPanel(
         if (!positive(metrics?.total?.sampleCount)) {
             return "--"
         }
-        return "本机总耗时 ${formatLatencyNumber(metrics?.total?.averageMs)} ms / " +
-            "本机排队 ${formatLatencyNumber(metrics?.buffer?.averageMs, metrics?.buffer?.sampleCount)} ms"
+        return "本机总耗时 ${formatLatencyNumber(metrics?.total?.averageMs?.toDouble())} ms / " +
+            "本机排队 ${formatLatencyNumber(metrics?.buffer?.averageMs?.toDouble(), metrics?.buffer?.sampleCount)} ms"
     }
 
     private fun formatLatencyNumber(
