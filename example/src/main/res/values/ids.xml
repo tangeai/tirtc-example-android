@@ -5,6 +5,4 @@
     <item name="field_audio_stream_id" type="id" />
     <item name="field_video_stream_id" type="id" />
     <item name="field_token" type="id" />
-    <item name="field_device_id" type="id" />
-    <item name="field_device_secret_key" type="id" />
 </resources>

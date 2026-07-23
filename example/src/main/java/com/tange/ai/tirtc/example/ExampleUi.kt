@@ -3,8 +3,8 @@ package com.tange.ai.tirtc.example
 import android.content.Context
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.text.TextUtils
 import android.text.InputType
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -132,37 +132,10 @@ internal fun Context.playerTopBar(
     }
 }
 
-internal fun Context.deviceTopBar(
-    deviceId: String,
-    onBack: () -> Unit,
-    onCommand: () -> Unit,
-    onUploadLogs: () -> Unit,
-): View {
-    return LinearLayout(this).apply {
-        gravity = Gravity.CENTER_VERTICAL
-        orientation = LinearLayout.HORIZONTAL
-        setPadding(dp(16), statusBarInset() + dp(12), dp(12), dp(10))
-        setBackgroundColor(ExampleTheme.background)
-        addView(appBarBackButton(onBack), appBarBackLayoutParams())
-        addView(
-            TextView(context).apply {
-                text = deviceId
-                setTextColor(ExampleTheme.primary)
-                textSize = 14f
-                typeface = Typeface.DEFAULT_BOLD
-                setSingleLine(true)
-                ellipsize = TextUtils.TruncateAt.END
-            },
-            LinearLayout.LayoutParams(0, wrap(), 1f),
-        )
-        addView(appBarActionButton("发送命令", onCommand), appBarActionLayoutParams())
-        addView(appBarActionButton("上传日志", onUploadLogs), appBarActionLayoutParams())
-    }
-}
-
 internal fun Context.playerBottomControls(
     bubble: TextView,
     localAudioButton: TextView,
+    outputVolumeButton: TextView,
     downlinkButton: TextView,
 ): View {
     return LinearLayout(this).apply {
@@ -178,9 +151,18 @@ internal fun Context.playerBottomControls(
         addViewWithMargin(
             LinearLayout(context).apply {
                 gravity = Gravity.END or Gravity.CENTER_VERTICAL
-                orientation = LinearLayout.HORIZONTAL
+                orientation = LinearLayout.VERTICAL
                 addView(localAudioButton, context.compactButtonLayoutParams())
-                addView(downlinkButton, context.compactButtonLayoutParams())
+                addViewWithMargin(
+                    LinearLayout(context).apply {
+                        gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                        orientation = LinearLayout.HORIZONTAL
+                        addView(outputVolumeButton, context.compactButtonLayoutParams())
+                        addView(downlinkButton, context.compactButtonLayoutParams())
+                    },
+                    top = 8,
+                    bottom = 0,
+                )
             },
             top = 12,
             bottom = 0,
@@ -230,14 +212,6 @@ internal fun Context.videoPanel(label: String): FrameLayout {
             },
             FrameLayout.LayoutParams(match(), match()),
         )
-    }
-}
-
-internal fun Context.deviceStatusSurface(content: TextView): View {
-    return surface {
-        setPadding(dp(16), dp(12), dp(16), dp(12))
-        addView(sectionTitle("设备端状态"))
-        addView(content)
     }
 }
 

@@ -32,36 +32,6 @@ internal fun parseClientQrPayload(
     }
 }
 
-internal fun parseDeviceQrPayload(
-    payload: String,
-    onError: (String) -> Unit,
-): DeviceConfiguration? {
-    return try {
-        val json = JSONObject(payload)
-        val allowed = setOf("endpoint", "device_id", "device_secret_key")
-        val keys = json.keys().asSequence().toSet()
-        if (!allowed.containsAll(keys)) {
-            onError("设备端二维码包含未允许字段")
-            return null
-        }
-        val deviceId = json.optString("device_id").trim()
-        val secret = json.optString("device_secret_key")
-        if (deviceId.isBlank() || secret.isBlank()) {
-            onError("二维码缺少 device_id 或 device_secret_key")
-            null
-        } else {
-            DeviceConfiguration(
-                endpoint = json.optString("endpoint").trim(),
-                deviceId = deviceId,
-                deviceSecretKey = secret,
-            )
-        }
-    } catch (error: Exception) {
-        onError("二维码 JSON 无效：${error.message}")
-        null
-    }
-}
-
 internal fun parseCommandIdOrNull(
     text: String,
     onError: (String) -> Unit,

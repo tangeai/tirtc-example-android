@@ -12,12 +12,10 @@ import com.tange.ai.tirtc.TiRtcAudioOutput
 import com.tange.ai.tirtc.TiRtcAudioOutputMetricsSnapshot
 import com.tange.ai.tirtc.TiRtcConn
 import com.tange.ai.tirtc.TiRtcConnMetricsSnapshot
-import com.tange.ai.tirtc.TiRtcOutputLocalLatencyMetrics
 import com.tange.ai.tirtc.TiRtcVideoOutput
 import com.tange.ai.tirtc.TiRtcVideoOutputDebugSnapshot
 import com.tange.ai.tirtc.TiRtcVideoOutputMetricsSnapshot
 import java.util.Locale
-import kotlin.math.roundToInt
 
 internal class DownlinkMetricsPanel(
     context: Context,
@@ -28,8 +26,8 @@ internal class DownlinkMetricsPanel(
     private val videoReceive = metricLine("视频接收")
     private val audioReceive = metricLine("音频接收")
     private val audioStutter = metricLine("音频卡顿", maxLines = 2)
-    private val videoLatency = metricLine("视频本机延迟", maxLines = 2)
-    private val audioLatency = metricLine("音频本机延迟", maxLines = 2)
+    private val videoLatency = metricLine("视频输出延迟", maxLines = 2)
+    private val audioLatency = metricLine("音频输出延迟", maxLines = 2)
     private val connectDuration = metricLine("连接耗时")
     private val firstFrameDuration = metricLine("首帧耗时")
     private val sessionStutterRatio = metricLine("本次播放卡顿占比")
@@ -94,24 +92,24 @@ internal class DownlinkMetricsPanel(
             "分辨率 ${displayVideoSize(videoDebug)} / 视频 ${displayVideoCodec(videoDebug?.codec)} / " +
             "音频 ${displayAudioCodec(audioDebug?.codec)} / ${displayVideoDecoder(videoDebug)}"
         videoReceive.value.text =
-            "码率 ${formatKbps(videoMetrics?.inputBitrateKbps)} / " +
-            "接收 ${formatRate(videoMetrics?.inputFps, "帧/秒")} / " +
-            "渲染 ${formatRate(videoMetrics?.renderFps, "帧/秒")}"
+            "码率 ${formatKbps(videoMetrics?.videoInputBitrateKbps)} / " +
+            "接收 ${formatRate(videoMetrics?.videoInputFps, "帧/秒")} / " +
+            "渲染 ${formatRate(videoMetrics?.videoRenderFps, "帧/秒")}"
         audioReceive.value.text =
-            "码率 ${formatKbps(audioMetrics?.inputBitrateKbps)} / " +
-            "音频包 ${formatRate(audioMetrics?.inputPacketRate, "个/秒")}"
+            "码率 ${formatKbps(audioMetrics?.audioInputBitrateKbps)} / " +
+            "音频包 ${formatRate(audioMetrics?.audioInputPacketRate, "个/秒")}"
         audioStutter.value.text =
-            "最近 ${formatCount(audioMetrics?.stutter?.recentWindowStutterCount)} / " +
-            "累计 ${formatDuration(audioMetrics?.stutter?.recentWindowStutterTotalMs)} / " +
-            "最长 ${formatDuration(audioMetrics?.stutter?.recentWindowStutterPeakMs)} / " +
+            "次数 ${formatCount(audioMetrics?.stutter?.stutterCount)} / " +
+            "累计 ${formatDuration(audioMetrics?.stutter?.stutterTotalMs)} / " +
+            "最长 ${formatDuration(audioMetrics?.stutter?.stutterPeakMs)} / " +
             (if (audioOutputHealthOk(audioMetrics)) "稳定" else "断续风险")
-        videoLatency.value.text = formatLocalLatency(videoMetrics?.localLatency)
-        audioLatency.value.text = formatLocalLatency(audioMetrics?.localLatency)
+        videoLatency.value.text = formatOutputLatency(videoMetrics?.estimatedOutputLatencyMs)
+        audioLatency.value.text = formatOutputLatency(audioMetrics?.estimatedOutputLatencyMs)
         connectDuration.value.text = formatDuration(connMetrics?.connectDurationMs)
-        firstFrameDuration.value.text = formatDuration(videoMetrics?.startup?.firstFrameDurationMs)
-        sessionStutterRatio.value.text = formatRatio(videoMetrics?.stutter?.sessionStutterRatio)
-        sessionStutterCount.value.text = formatCount(videoMetrics?.stutter?.sessionStutterCount)
-        sessionStutterPeak.value.text = formatDuration(videoMetrics?.stutter?.sessionStutterPeakMs)
+        firstFrameDuration.value.text = formatDuration(videoMetrics?.startup?.timeToFirstOutputMs)
+        sessionStutterRatio.value.text = formatPercent(videoMetrics?.stutter?.stutterRate)
+        sessionStutterCount.value.text = formatCount(videoMetrics?.stutter?.stutterCount)
+        sessionStutterPeak.value.text = formatDuration(videoMetrics?.stutter?.stutterPeakMs)
     }
 
     private fun addMetric(metric: MetricLine) {
@@ -177,38 +175,18 @@ internal class DownlinkMetricsPanel(
     }
 
     private fun audioOutputHealthOk(metrics: TiRtcAudioOutputMetricsSnapshot?): Boolean {
-        return audioOutputMetricsReady(metrics) && (metrics?.stutter?.recentWindowStutterCount ?: 0L) == 0L
+        return audioOutputMetricsReady(metrics) && (metrics?.stutter?.stutterCount ?: 0L) == 0L
     }
 
     private fun audioOutputMetricsReady(metrics: TiRtcAudioOutputMetricsSnapshot?): Boolean {
-        return positive(metrics?.inputBitrateKbps) &&
-            positive(metrics?.inputPacketRate) &&
-            positive(metrics?.renderCallbackRate) &&
-            positive(metrics?.rateWindowDurationMs) &&
-            positive(metrics?.localLatency?.windowDurationMs) &&
-            positive(metrics?.localLatency?.total?.sampleCount)
+        return positive(metrics?.audioInputBitrateKbps) &&
+            positive(metrics?.audioInputPacketRate) &&
+            positive(metrics?.audioRenderCallbackRate) &&
+            nonNegative(metrics?.estimatedOutputLatencyMs)
     }
 
-    private fun formatLocalLatency(metrics: TiRtcOutputLocalLatencyMetrics?): String {
-        if (!positive(metrics?.total?.sampleCount)) {
-            return "--"
-        }
-        return "本机总耗时 ${formatLatencyNumber(metrics?.total?.averageMs?.toDouble())} ms / " +
-            "本机排队 ${formatLatencyNumber(metrics?.buffer?.averageMs?.toDouble(), metrics?.buffer?.sampleCount)} ms"
-    }
-
-    private fun formatLatencyNumber(
-        value: Double?,
-        sampleCount: Long? = null,
-    ): String {
-        if (sampleCount != null && sampleCount <= 0) {
-            return "--"
-        }
-        if (value == null || value.isNaN() || value.isInfinite() || value < 0) {
-            return "--"
-        }
-        return value.roundToInt().toString()
-    }
+    private fun formatOutputLatency(valueMs: Long?): String =
+        if (nonNegative(valueMs)) "估算输出延迟 $valueMs ms" else "--"
 
     private fun formatDuration(durationMs: Long?): String {
         if (durationMs == null || durationMs < 0) {
@@ -217,11 +195,11 @@ internal class DownlinkMetricsPanel(
         return "$durationMs ms"
     }
 
-    private fun formatRatio(ratio: Double?): String {
-        if (ratio == null || ratio.isNaN() || ratio.isInfinite()) {
+    private fun formatPercent(value: Double?): String {
+        if (value == null || value.isNaN() || value.isInfinite() || value < 0) {
             return "--"
         }
-        return "${(ratio * 100.0).toStringWithPrecision(1)}%"
+        return "${value.toStringWithPrecision(1)}%"
     }
 
     private fun formatKbps(value: Double?): String {
@@ -253,6 +231,8 @@ internal class DownlinkMetricsPanel(
     }
 
     private fun positive(value: Number?): Boolean = value != null && value.toDouble() > 0.0
+
+    private fun nonNegative(value: Number?): Boolean = value != null && value.toDouble() >= 0.0
 
     private data class MetricLine(
         val root: View,
