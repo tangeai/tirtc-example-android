@@ -38,7 +38,7 @@ android {
 }
 
 dependencies {
-    implementation("com.tange.ai:tirtc-av:${providers.gradleProperty("TIRTC_ANDROID_VERSION").get()}")
+    implementation("com.tange.ai:tirtc:${providers.gradleProperty("TIRTC_ANDROID_VERSION").get()}")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
